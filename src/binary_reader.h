@@ -14,7 +14,7 @@
 
 #include <cassert>
 
-#define BF90_VERBOSE
+// #define BF90_VERBOSE
 
 template<class a> inline constexpr std::string getVarName(){ assert(false); return "unknown_type"; };
 template<> inline std::string getVarName<int>(){ return "int32_t"; }
@@ -24,10 +24,10 @@ template<> inline std::string getVarName<double>(){ return "double"; }
 class BinaryReaderF90 {
   
   private:
-    std::ifstream _infile; // ( fname, std::ios::in | std::ios::binary );
+    std::ifstream _infile;
     std::string _filename;
 
-    // size of f90 record
+    // size of f90 record in bytes
     const int _f90_record_size = 4; 
 
   public:
@@ -37,7 +37,11 @@ class BinaryReaderF90 {
 
     };
 
-    ~BinaryReaderF90() = default;
+    ~BinaryReaderF90(){
+      if( _infile.is_open() ){
+        _infile.close();
+      }
+    };
 
     /**
      * Open file
@@ -45,6 +49,11 @@ class BinaryReaderF90 {
     bool open() {
       _infile.open( _filename, std::ios::in | std::ios::binary );
       return _infile.is_open();
+    }
+
+    bool close() {
+      _infile.close();
+      return ~_infile.is_open();
     }
 
     /* Accessing single variable */
@@ -169,6 +178,42 @@ class BinaryReaderF90 {
 #endif
 
       assert( record_in == record_out );
+
+    }
+
+    void analyzeRecord() {
+
+      int record_in, record_out;
+
+      _infile.seekg ( 0, _infile.end );
+      size_t maxbytes = _infile.tellg();
+      _infile.seekg (0, _infile.beg );
+      
+      std::cout << "\t\t> Max number of bytes : " << maxbytes << std::endl;
+
+      bool keep_analyze = true;
+      while( keep_analyze ){
+        
+        // read 1st record
+        _infile.read( reinterpret_cast<char *>( &record_in ), _f90_record_size );
+
+        // move cursor
+        size_t cpos = _infile.tellg();
+        _infile.seekg( cpos + record_in );
+
+        // read 2nd record
+        _infile.read( reinterpret_cast<char *>( &record_out ), _f90_record_size );
+
+        assert( record_in == record_out );
+
+        std::cout << "\t\t\t> Record of size " << record_in << " bytes" << std::endl;
+
+        if( cpos >= maxbytes || _infile.rdstate() == std::ifstream::failbit 
+            || _infile.rdstate() == std::ifstream::eofbit ){
+          keep_analyze = false;
+        }
+
+      }
 
     }
 
