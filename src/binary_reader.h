@@ -133,4 +133,43 @@ class BinaryReaderF90 {
       return tmp;
     }
 
+    /**
+     * Access a 1D array, this function performs a full read of the data 
+     */
+    template<typename var_t>
+    inline
+    void accessVarArray_1d( std::vector<var_t> & buffer ) {
+      assert( buffer.empty() );
+
+      int record_in, record_out;
+
+      // read 1st fortran record
+      _infile.read( reinterpret_cast<char *>( &record_in ), _f90_record_size );
+
+#ifdef BF90_VERBOSE
+      std::cout << "\n\t> Read : record [in] " << record_in << " bytes (" 
+                << record_in / sizeof( var_t ) << " value)" << std::endl;
+#endif
+
+      size_t nelem = record_in / sizeof( var_t ); 
+      buffer( nelem, static_cast<var_t>( 0 ) );
+
+      // read variable data
+      _infile.read( reinterpret_cast<char *>( buffer.data() ), sizeof( var_t ) * nelem );
+
+#ifdef BF90_VERBOSE
+      std::cout << "\t> Read :  " << buffer.size() << " values ( " << sizeof( var_t ) * nelem << " bytes)" << std::endl;
+#endif
+
+      // read 2nd fortran record
+      _infile.read( reinterpret_cast<char *>( &record_out ), _f90_record_size );
+
+#ifdef BF90_VERBOSE
+      std::cout << "\t> Read : record [out] " << record_out << " bytes" << std::endl;
+#endif
+
+      assert( record_in == record_out );
+
+    }
+
 };
