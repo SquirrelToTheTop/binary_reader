@@ -10,16 +10,31 @@
 #include <iostream>
 #include <iomanip>
 #include <string>
-#include <fstream>
+#include <string_view>
 
+#include <fstream>
+#include <cstdint>
 #include <cassert>
+
+#include <unordered_map>
 
 // #define BF90_VERBOSE
 
-template<class a> inline constexpr std::string getVarName(){ assert(false); return "unknown_type"; };
-template<> inline std::string getVarName<int>(){ return "int32_t"; }
-template<> inline std::string getVarName<float>(){ return "float"; }
-template<> inline std::string getVarName<double>(){ return "double"; }
+// template<typename type_t> constexpr std::string_view getName() { return "unknown"; }
+// template<> constexpr std::string_view getName<char>()  { return "char";  }
+// template<> constexpr std::string_view getName<int8_t>()  { return "int8_t";  }
+// template<> constexpr std::string_view getName<uint8_t>() { return "uint8_t"; }
+// template<> constexpr std::string_view getName<int16_t>() { return "int16_t"; }
+// template<> constexpr std::string_view getName<int32_t>() { return "int32_t"; }
+// template<> constexpr std::string_view getName<float>()   { return "float";   }
+// template<> constexpr std::string_view getName<double>()  { return "double";  }
+
+const std::unordered_map< std::string, int > sizeMap = { {"int8_t", 1}, {"uint32_t", 4},
+{"int32_t", 4}, {"int64_t", 8}, {"float32_t", 4}, {"float64_t", 8},  };
+
+struct InfoBlock {
+  std::string m_name, m_type;
+};
 
 class BinaryReaderF90 {
   
@@ -27,10 +42,15 @@ class BinaryReaderF90 {
     std::ifstream _infile;
     std::string _filename;
 
+    // for direct access in key - value like
+    std::vector<InfoBlock> fmtOrder;
+    std::unordered_map<std::string, size_t> offsetMap;
+
     // size of f90 record in bytes
     const int _f90_record_size = 4; 
 
   public:
+
     BinaryReaderF90( const std::string &fname ) : _filename( fname ){
       assert( !_filename.empty() );
       assert( checkFileExist( _filename ) );
@@ -73,7 +93,57 @@ class BinaryReaderF90 {
 
 #ifdef BF90_VERBOSE
       std::cout << "\n\t> Read : record [in] " << record_in << " bytes (" 
-                << record_in / sizeof( var_t ) << " value)" << std::endl;
+                << record_in / sizeof( var_t ) << " value, type : " 
+                << getName<var_t>() << ")" << std::endl;
+#endif
+
+      // be sure there is only ONE value
+      assert( record_in / sizeof( var_t ) == 1 );
+      
+      // be sure the type is correct (redundant with previous assert)
+      assert( sizeof( tmp ) == record_in );
+
+      // read variable data
+      _infile.read( reinterpret_cast<char *>( &tmp ), sizeof( var_t ) );
+
+#ifdef BF90_VERBOSE
+      std::cout << "\t> Read : value : " << tmp << std::endl;
+#endif
+
+      // read 2nd fortran record
+      _infile.read( reinterpret_cast<char *>( &record_out ), _f90_record_size );
+
+#ifdef BF90_VERBOSE
+      std::cout << "\t> Read : record [out] " << record_out << " bytes" << std::endl;
+#endif
+
+      assert( record_in == record_out );
+
+      return tmp;
+    }
+
+    template<typename var_t>
+    inline
+    var_t read( const std::string & varName ) {
+      int record_in, record_out;
+
+      // be sure of size of record match size of var for record
+      assert( sizeof(int) == _f90_record_size );
+
+      assert( offsetMap.find( varName ) != offsetMap.end() );
+
+      // initialize variable value
+      var_t tmp = static_cast<var_t>( 0 );
+
+      _infile.seekg( offsetMap.at( varName ) );
+
+      // read 1st fortran record
+      _infile.read( reinterpret_cast<char *>( &record_in ), _f90_record_size );
+
+#ifdef BF90_VERBOSE
+      std::cout << "\n\t> Read : record [in] " << record_in << " bytes (" 
+                << record_in / sizeof( var_t ) << " value, type : " 
+                << getName<var_t>() << ")" << std::endl;
 #endif
 
       // be sure there is only ONE value
@@ -116,7 +186,8 @@ class BinaryReaderF90 {
 
 #ifdef BF90_VERBOSE
       std::cout << "\n\t> Read : record [in] " << record_in << " bytes (" 
-                << record_in / sizeof(var_t) << " value)" << std::endl;
+                << record_in / sizeof(var_t) << " value, type : " 
+                << getName<var_t>() << ")" << std::endl;
 #endif
 
       // be sure there is only ONE value
@@ -215,6 +286,70 @@ class BinaryReaderF90 {
 
       }
 
+    }
+
+    void parseFormat( const std::string &ff ){
+
+      assert( checkFileExist( ff ) );
+
+      std::ifstream in( ff, std::ios::in );
+      assert( in.is_open() );
+      
+      std::string line;
+      while ( std::getline(in, line) ){
+
+        const std::string delimiter = ":";
+
+        std::string v_id = line.substr(0, line.find( delimiter ) ); 
+        std::string v_ty = line.substr(line.find( delimiter )+1, line.length() );
+
+        fmtOrder.emplace_back( InfoBlock {v_id, v_ty} );
+
+      }
+
+      in.close();
+
+    }
+
+    void buildMap() {
+
+      if( ! _infile.is_open() ) {
+        open();
+      }
+
+      _infile.seekg ( 0, _infile.end );
+      size_t maxbytes = _infile.tellg();
+      _infile.seekg (0, _infile.beg );
+
+      int record_in, record_out;
+      bool keep_analyze = true;
+      size_t datablock = 0;
+
+      while( keep_analyze ){
+
+        size_t offset_bf_rin = _infile.tellg();
+        offsetMap.emplace( std::make_pair( fmtOrder[ datablock ].m_name, offset_bf_rin ) );
+        
+        // read 1st record
+        _infile.read( reinterpret_cast<char *>( &record_in ), _f90_record_size );
+
+        // move cursor
+        size_t cpos = _infile.tellg();
+        _infile.seekg( cpos + record_in );
+
+        // read 2nd record
+        _infile.read( reinterpret_cast<char *>( &record_out ), _f90_record_size );
+
+        assert( record_in == record_out );
+
+        datablock ++;
+
+        if( cpos >= maxbytes || _infile.rdstate() == std::ifstream::failbit 
+            || _infile.rdstate() == std::ifstream::eofbit || datablock >= fmtOrder.size() ){
+          keep_analyze = false;
+        }
+
+      }
     }
 
 };

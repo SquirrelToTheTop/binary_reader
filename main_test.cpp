@@ -37,6 +37,7 @@ int main( int argc, char* argv[] ){
     }
 
     brf90.close();
+
   }
 
   std::cout << "\n\t> Record analysis ... " << std::endl;
@@ -45,6 +46,27 @@ int main( int argc, char* argv[] ){
     brf90.open();
     brf90.analyzeRecord();
     brf90.close();
+  }
+
+  if( argc == 3 ){
+
+  
+    std::cout << "\n\t> Key - value access ... " << std::endl;
+    {
+      std::string fmtname = argv[2];
+
+      BinaryReaderF90 brf90 ( fname );
+      brf90.parseFormat( fmtname );
+      brf90.buildMap();
+
+      int nivals = brf90.read<int>( "nivals" );
+      int nvalues = brf90.read<int>( "nvalues" );
+
+      std::cout << "\t> 'nvalues' : " << nvalues << std::endl;
+      std::cout << "\t> 'nivals' : " << nivals << std::endl;
+    
+    }
+  
   }
   
   return EXIT_SUCCESS;
